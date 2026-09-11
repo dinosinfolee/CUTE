@@ -1,4 +1,4 @@
-name: Deploy OwnThink JupyterLite
+name: Deploy CUTE JupyterLite
 
 on:
   push:
@@ -35,12 +35,12 @@ jobs:
       - name: JupyterLite 빌드
         run: jupyter lite build --contents content --output-dir dist
 
-      - name: OwnThink 연결 스크립트와 배색 삽입
+      - name: CUTE 연결 스크립트와 배색 삽입
         run: |
-          cp ownthink-bridge.js dist/lab/ownthink-bridge-v12.js
-          cp ownthink-theme.css dist/lab/ownthink-theme.css
-          sed -i 's#</head>#<link rel="stylesheet" href="ownthink-theme.css"><script defer src="ownthink-bridge-v12.js"></script></head>#' dist/lab/index.html
-          grep -q ownthink-bridge-v12 dist/lab/index.html
+          cp cute-bridge.js dist/lab/cute-bridge-v13.js
+          cp cute-theme.css dist/lab/cute-theme.css
+          sed -i 's#</head>#<link rel="stylesheet" href="cute-theme.css"><script defer src="cute-bridge-v13.js"></script></head>#' dist/lab/index.html
+          grep -q cute-bridge-v13 dist/lab/index.html
           echo "삽입 확인 완료"
 
       - name: Jekyll 처리 끄기

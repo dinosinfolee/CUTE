@@ -1,14 +1,14 @@
 /**
- * OwnThink 수동 저장 v12 (화면별 작업 파일·열린 탭 분리 · 최신 저장 API)
+ * CUTE 수동 저장 v12 (화면별 작업 파일·열린 탭 분리 · 최신 저장 API)
  *  - v12: 현재 노트북·CSV 저장 API 형식과 배포 코드를 일치시킴
  *  - v11: 각 화면이 시작될 때 그 화면에 복원된 이전 탭만 닫고 전용 파일만 표시함
  *  - v10: 같은 브라우저의 학생 화면, 교사 미리보기, 교사 상세 보기와
  *         템플릿 편집이 서로 다른 로컬 노트북 파일을 사용함
  *  - v9: 이전 브라우저 세션의 template.ipynb와 저장 확인창까지 자동 정리
  *  - v8: 템플릿 편집 모드에서 이전 template.ipynb를 제거하고
- *        OwnThink_template.ipynb 하나만 열고 저장함
+ *        CUTE_template.ipynb 하나만 열고 저장함
  *  - v6.2: 저장본을 불러오면 노트북을 자동으로 다시 열어 바로 보이게 함
- *  - v5: 템플릿 편집 모드(?ownthink-template=1)
+ *  - v5: 템플릿 편집 모드(?cute-template=1)
  *  - v6: 사용자가 바뀌면(다른 접속 코드·편집 모드 전환) 작업 공간을 비우고
  *        새 사용자의 서버 저장본으로 다시 채움. 제출한 데이터 파일도 자동 복원.
  *  - v3: [제출] 신호로 현재 노트북을 제출본으로 올림
@@ -22,33 +22,42 @@
  * 그래서 부팅에 끼어들 일이 없습니다.
  *
  *  1. 앱이 켜지면 mywork.ipynb 가 없을 때 만들어 둡니다.
- *     서버 저장본이 있으면 그것을, 없으면 OwnThink_template.ipynb 를 바탕으로.
+ *     서버 저장본이 있으면 그것을, 없으면 CUTE_template.ipynb 를 바탕으로.
  *  2. 학생이 [클라우드에 저장]을 누르면 노트북과 CSV를 함께 서버로 보냅니다.
  *  3. 기록지의 [불러오기] 신호(postMessage)를 받아 저장본으로 되돌립니다.
  *
  * 개인 코드와 서버 주소는 기록지가 iframe 주소 뒤에 붙여 줍니다.
- *   lab/index.html?ownthink=개인코드&api=배포주소
+ *   lab/index.html?cute=개인코드&api=배포주소
  * ---------------------------------------------------------------------------
  */
 (function () {
   "use strict";
 
   var FILE = "preview.ipynb";
-  var TEMPLATE_FILE = "OwnThink_template.ipynb";
+  var TEMPLATE_FILE = "CUTE_template.ipynb";
   var 상태 = { 해시: null, contents: null, app: null, 최근: null };
+
+  /* 이전 브랜드에서 저장한 작업 소유자 표식을 새 키로 한 번만 옮깁니다. */
+  try {
+    var 예전키 = ["own", "think"].join("") + "_ws_owner";
+    if (localStorage.getItem("cute_ws_owner") === null && localStorage.getItem(예전키) !== null) {
+      localStorage.setItem("cute_ws_owner", localStorage.getItem(예전키));
+    }
+    localStorage.removeItem(예전키);
+  } catch (e) {}
 
   /* ---------- 개인 코드와 서버 주소 ---------- */
   var q = new URLSearchParams(location.search);
-  /* 템플릿 편집 모드 — 교사 대시보드가 ?ownthink-template=1 로 엽니다.
+  /* 템플릿 편집 모드 — 교사 대시보드가 ?cute-template=1 로 엽니다.
      학생용 자동 저장은 전부 쉬고, [저장] 신호에만 응답합니다. */
-  var TPL = q.get("ownthink-template") === "1";
-  /* 교사 보기 모드 — 교사 대시보드가 ?ownthink-view=1&code=..&kind=.. 로 엽니다.
+  var TPL = q.get("cute-template") === "1";
+  /* 교사 보기 모드 — 교사 대시보드가 ?cute-view=1&code=..&kind=.. 로 엽니다.
      학생의 저장본과 데이터 파일을 그대로 열어 보되, 저장·제출은 하지 않습니다. */
-  var VIEW = q.get("ownthink-view") === "1";
-  var PREVIEW = q.get("ownthink-preview") === "1";
+  var VIEW = q.get("cute-view") === "1";
+  var PREVIEW = q.get("cute-preview") === "1";
   var VCODE = q.get("code") || "";
   var VKIND = q.get("kind") === "auto" ? "auto" : "manual";
-  var CODE = q.get("ownthink") || "";
+  var CODE = q.get("cute") || "";
   var API  = q.get("api") || "";
   var CONNECTED = !TPL && !VIEW && !PREVIEW && !!CODE && !!API;
   function 안전이름(value) { return String(value || "unknown").replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 48); }
@@ -56,9 +65,9 @@
   else if (VIEW) FILE = "teacher-review-" + 안전이름(VCODE) + "-" + VKIND + ".ipynb";
   else if (CONNECTED) FILE = "student-" + 안전이름(CODE) + ".ipynb";
   else if (PREVIEW) FILE = "teacher-design-preview.ipynb";
-  if (VIEW && !API) { console.log("[OwnThink] 서버 주소가 없어 교사 보기 모드를 시작할 수 없습니다."); return; }
-  if (TPL && !API) console.log("[OwnThink] 로컬 템플릿 편집 모드로 시작합니다.");
-  else if (!CONNECTED) { console.log("[OwnThink] 독립 실행 모드로 기본 템플릿을 엽니다."); }
+  if (VIEW && !API) { console.log("[CUTE] 서버 주소가 없어 교사 보기 모드를 시작할 수 없습니다."); return; }
+  if (TPL && !API) console.log("[CUTE] 로컬 템플릿 편집 모드로 시작합니다.");
+  else if (!CONNECTED) { console.log("[CUTE] 독립 실행 모드로 기본 템플릿을 엽니다."); }
 
   /* ---------- 서버와 주고받기 ---------- */
   function 서버에서(kind) {
@@ -90,7 +99,7 @@
       var w = 상태.app.shell.currentWidget;
       if (w && w.context && w.context.save && /\.ipynb$/i.test(w.context.path || "")
           && w.context.model && w.context.model.dirty) await w.context.save();
-    } catch (e) { console.warn("[OwnThink] 문서 저장 실패(계속 진행):", e); }
+    } catch (e) { console.warn("[CUTE] 문서 저장 실패(계속 진행):", e); }
   }
 
   /* ---------- 이전 버전 학생 파일 마이그레이션 ----------
@@ -100,14 +109,14 @@
   async function 작업공간확인() {
     if (!CONNECTED) return;
     try { await 상태.contents.get(FILE, { content: false }); return; } catch (e) {}
-    var 이전 = localStorage.getItem("ownthink_ws_owner");
-    if (이전 !== 식별) { try { localStorage.setItem("ownthink_ws_owner", 식별); } catch (e) {} return; }
+    var 이전 = localStorage.getItem("cute_ws_owner");
+    if (이전 !== 식별) { try { localStorage.setItem("cute_ws_owner", 식별); } catch (e) {} return; }
     try {
       var 이전파일 = await 상태.contents.get("mywork.ipynb", { content: true });
       await 상태.contents.save(FILE, { type: "notebook", format: "json", content: 이전파일.content });
-      console.log("[OwnThink] 이전 학생 파일을 분리된 파일로 옮겼습니다:", FILE);
+      console.log("[CUTE] 이전 학생 파일을 분리된 파일로 옮겼습니다:", FILE);
     } catch (e) {}
-    try { localStorage.setItem("ownthink_ws_owner", 식별); } catch (e) {}
+    try { localStorage.setItem("cute_ws_owner", 식별); } catch (e) {}
   }
 
   /* ---------- 제출한 데이터 파일 복원 ----------
@@ -131,10 +140,10 @@
           for (var j = 0; j < buf.length; j += 토막)
             글 += String.fromCharCode.apply(null, buf.subarray(j, j + 토막));
           await 상태.contents.save(이름, { type: "file", format: "base64", content: btoa(글) });
-          console.log("[OwnThink] 데이터 파일 복원:", 이름);
-        } catch (e) { console.warn("[OwnThink] 복원 실패:", 이름, e); }
+          console.log("[CUTE] 데이터 파일 복원:", 이름);
+        } catch (e) { console.warn("[CUTE] 복원 실패:", 이름, e); }
       }
-    } catch (e) { console.warn("[OwnThink] 데이터 목록 확인 실패:", e); }
+    } catch (e) { console.warn("[CUTE] 데이터 목록 확인 실패:", e); }
   }
 
   /* ---------- 교사 보기 모드 ---------- */
@@ -142,7 +151,7 @@
     try { await 상태.app.commands.execute("filebrowser:refresh"); } catch (e) {}
   }
   function 보기알림(단계, ok, 상세) {
-    try { parent.postMessage({ ownthink: "view-status", step: 단계, ok: !!ok, error: 상세 ? String(상세).slice(0, 300) : "" }, "*"); } catch (e) {}
+    try { parent.postMessage({ cute: "view-status", step: 단계, ok: !!ok, error: 상세 ? String(상세).slice(0, 300) : "" }, "*"); } catch (e) {}
   }
   /* 세션 복원이 열어 둔 옛 문서를 정리하고, 새 파일을 연 뒤 디스크 기준으로 갱신합니다.
      복원된 편집기는 메모리의 옛 내용을 계속 보여 주므로, 닫고 다시 열어야 합니다. */
@@ -243,7 +252,7 @@
     /* 복원 기능이 옛 학생의 문서를 먼저 열어 둘 수 있어, 시작하자마자 전부 닫습니다 */
     await 모두닫기();
     /* 데이터 파일을 먼저 되살립니다 — 노트북이 잘못돼도 파일은 보이게 */
-    try { await 데이터복원(VCODE); } catch (e) { console.warn("[OwnThink] 데이터 복원 실패:", e); }
+    try { await 데이터복원(VCODE); } catch (e) { console.warn("[CUTE] 데이터 복원 실패:", e); }
     try {
       var res = await fetch(API + "/api/workspace?code=" + encodeURIComponent(VCODE) + "&kind=" + VKIND);
       var r = null;
@@ -277,8 +286,8 @@
       catch (e) { 보기알림("파일 열기", false, e); return; }
       await 목록새로고침();
       보기알림("완료", true, "");
-      console.log("[OwnThink] 교사 보기 준비 완료:", VCODE, VKIND);
-    } catch (e) { 보기알림("준비", false, e); console.warn("[OwnThink] 교사 보기 준비 실패:", e); }
+      console.log("[CUTE] 교사 보기 준비 완료:", VCODE, VKIND);
+    } catch (e) { 보기알림("준비", false, e); console.warn("[CUTE] 교사 보기 준비 실패:", e); }
   }
 
   /* ---------- 템플릿 편집 모드 ---------- */
@@ -329,21 +338,21 @@
       } else await 상태.contents.get(TEMPLATE_FILE, { content: false });
       상태.최근 = TEMPLATE_FILE;
       await 다시열기(TEMPLATE_FILE);
-      console.log("[OwnThink] 템플릿 편집 준비 완료");
-    } catch (e) { console.warn("[OwnThink] 템플릿 준비 실패:", e); }
+      console.log("[CUTE] 템플릿 편집 준비 완료");
+    } catch (e) { console.warn("[CUTE] 템플릿 준비 실패:", e); }
   }
   window.addEventListener("message", async function (ev) {
     var m = ev.data;
-    if (!TPL || !m || m.ownthink !== "tpl-pull" || !상태.contents) return;
+    if (!TPL || !m || m.cute !== "tpl-pull" || !상태.contents) return;
     try {
       await 문서먼저저장();
       /* 편집 화면에서 다른 탭이 선택되어도 기본 템플릿 하나만 저장합니다. */
       var p = TEMPLATE_FILE;
       var f = await 상태.contents.get(p, { content: true });
       var s = typeof f.content === "string" ? f.content : JSON.stringify(f.content);
-      ev.source && ev.source.postMessage({ ownthink: "tpl-content", ok: true, content: s, path: p }, "*");
+      ev.source && ev.source.postMessage({ cute: "tpl-content", ok: true, content: s, path: p }, "*");
     } catch (e) {
-      ev.source && ev.source.postMessage({ ownthink: "tpl-content", ok: false, error: String(e) }, "*");
+      ev.source && ev.source.postMessage({ cute: "tpl-content", ok: false, error: String(e) }, "*");
     }
   });
 
@@ -351,7 +360,7 @@
   async function 준비() {
     try {
       await 파일읽기();
-      console.log("[OwnThink] mywork.ipynb 가 이미 있습니다. 어느 저장본을 쓸지는 학생이 첫 화면에서 고릅니다.");
+      console.log("[CUTE] mywork.ipynb 가 이미 있습니다. 어느 저장본을 쓸지는 학생이 첫 화면에서 고릅니다.");
       return;
     } catch (e) { /* 없음 → 만든다 */ }
 
@@ -359,37 +368,37 @@
       var r = await 서버에서("auto");
       if (r && r.ok && r.exists && r.notebook && r.notebook.content) {
         await 파일쓰기(JSON.parse(r.notebook.content));
-        console.log("[OwnThink] 서버 저장본으로 mywork.ipynb 를 만들었습니다.");
+        console.log("[CUTE] 서버 저장본으로 mywork.ipynb 를 만들었습니다.");
         return;
       }
-    } catch (e) { console.warn("[OwnThink] 서버 확인 실패:", e); }
+    } catch (e) { console.warn("[CUTE] 서버 확인 실패:", e); }
 
     try {
-      var t = await fetch(API + "/api/template");                 // OwnThink에 등록된 템플릿
-      if (!t.ok) t = await fetch(new URL("../files/OwnThink_template.ipynb", location.href)); // 예비
+      var t = await fetch(API + "/api/template");                 // CUTE에 등록된 템플릿
+      if (!t.ok) t = await fetch(new URL("../files/CUTE_template.ipynb", location.href)); // 예비
       await 파일쓰기(await t.json());
-      console.log("[OwnThink] 템플릿으로 mywork.ipynb 를 만들었습니다.");
-    } catch (e) { console.warn("[OwnThink] 템플릿을 가져오지 못했습니다:", e); }
+      console.log("[CUTE] 템플릿으로 mywork.ipynb 를 만들었습니다.");
+    } catch (e) { console.warn("[CUTE] 템플릿을 가져오지 못했습니다:", e); }
   }
 
   async function 기본템플릿열기() {
     try {
       await 상태.contents.get(TEMPLATE_FILE, { content: false });
       await 다시열기(TEMPLATE_FILE);
-      console.log("[OwnThink] 기본 템플릿을 열었습니다.");
-    } catch (e) { console.warn("[OwnThink] 기본 템플릿 열기 실패:", e); }
+      console.log("[CUTE] 기본 템플릿을 열었습니다.");
+    } catch (e) { console.warn("[CUTE] 기본 템플릿 열기 실패:", e); }
   }
 
   async function 미리보기준비() {
     try {
       await 모두닫기();
-      var res = await fetch(new URL("../files/OwnThink_template.ipynb", location.href));
+      var res = await fetch(new URL("../files/CUTE_template.ipynb", location.href));
       if (!res.ok) throw new Error("기본 템플릿을 불러오지 못했습니다.");
       await 상태.contents.save(FILE, { type: "notebook", format: "json", content: await res.json() });
       상태.최근 = FILE;
       await 다시열기(FILE);
-      console.log("[OwnThink] 교사 수업 설계 미리보기 준비 완료");
-    } catch (e) { console.warn("[OwnThink] 미리보기 준비 실패:", e); }
+      console.log("[CUTE] 교사 수업 설계 미리보기 준비 완료");
+    } catch (e) { console.warn("[CUTE] 미리보기 준비 실패:", e); }
   }
 
   /* ---------- 2. 노트북과 CSV를 사용자가 요청할 때만 클라우드에 저장 ---------- */
@@ -424,12 +433,12 @@
     var m = ev.data;
     if (!m || !상태.contents) return;
 
-    if (m.ownthink === "download-notebook" || m.ownthink === "download-data") {
+    if (m.cute === "download-notebook" || m.cute === "download-data") {
       try {
-        var 내려받기결과 = m.ownthink === "download-notebook" ? await 노트북내려받기() : await 데이터내려받기();
-        ev.source && ev.source.postMessage({ ownthink: "download-result", ok: true, count: 내려받기결과.count, path: 내려받기결과.path || "" }, "*");
+        var 내려받기결과 = m.cute === "download-notebook" ? await 노트북내려받기() : await 데이터내려받기();
+        ev.source && ev.source.postMessage({ cute: "download-result", ok: true, count: 내려받기결과.count, path: 내려받기결과.path || "" }, "*");
       } catch (e) {
-        ev.source && ev.source.postMessage({ ownthink: "download-result", ok: false, error: String(e) }, "*");
+        ev.source && ev.source.postMessage({ cute: "download-result", ok: false, error: String(e) }, "*");
       }
       return;
     }
@@ -437,23 +446,23 @@
     if (TPL) return;
 
     // [클라우드 저장] — 버튼을 누른 시점의 노트북과 CSV만 서버에 올립니다.
-    if (m.ownthink === "push") {
+    if (m.cute === "push") {
       try {
         var r2 = await 클라우드저장();
-        console.log("[OwnThink] 수동 저장", r2 && r2.time);
+        console.log("[CUTE] 수동 저장", r2 && r2.time);
         ev.source && ev.source.postMessage(
-          { ownthink: "push-result", ok: !!(r2 && r2.ok), time: r2 && r2.time, count: r2 && r2.count, error: r2 && r2.error }, "*");
+          { cute: "push-result", ok: !!(r2 && r2.ok), time: r2 && r2.time, count: r2 && r2.count, error: r2 && r2.error }, "*");
       } catch (e) {
-        ev.source && ev.source.postMessage({ ownthink: "push-result", ok: false, error: String(e) }, "*");
+        ev.source && ev.source.postMessage({ cute: "push-result", ok: false, error: String(e) }, "*");
       }
       return;
     }
 
-    if (m.ownthink !== "load") return;
+    if (m.cute !== "load") return;
     try {
       var r = await 서버에서(m.kind === "manual" ? "manual" : "auto");
       if (!r.ok || !r.exists || !r.notebook || !r.notebook.content) {
-        ev.source && ev.source.postMessage({ ownthink: "load-result", ok: false, error: r.error || "저장본 없음" }, "*");
+        ev.source && ev.source.postMessage({ cute: "load-result", ok: false, error: r.error || "저장본 없음" }, "*");
         return;
       }
       await 파일쓰기(JSON.parse(r.notebook.content));
@@ -462,11 +471,11 @@
          실패해도 파일은 이미 바뀌었으므로, 학생에게 직접 열라고 안내합니다. */
       var 열림 = true;
       try { await 다시열기(FILE); }
-      catch (e) { 열림 = false; console.warn("[OwnThink] 다시 열기 실패:", e); }
+      catch (e) { 열림 = false; console.warn("[CUTE] 다시 열기 실패:", e); }
       ev.source && ev.source.postMessage(
-        { ownthink: "load-result", ok: true, kind: m.kind, time: r.time, 다시열림: 열림 }, "*");
+        { cute: "load-result", ok: true, kind: m.kind, time: r.time, 다시열림: 열림 }, "*");
     } catch (e) {
-      ev.source && ev.source.postMessage({ ownthink: "load-result", ok: false, error: String(e) }, "*");
+      ev.source && ev.source.postMessage({ cute: "load-result", ok: false, error: String(e) }, "*");
     }
   });
 
@@ -492,7 +501,7 @@
       await 데이터복원();
       목록새로고침();
       await 다시열기(FILE);
-      console.log("[OwnThink] 수동 저장 준비 완료");
+      console.log("[CUTE] 수동 저장 준비 완료");
     });
   }, 400);
   // 2분이 지나도 앱을 못 찾으면 포기하고 로그만 남깁니다.
