@@ -1,5 +1,7 @@
 /**
- * CUTE 수동 저장 v16 (학생별 저장소 분리 · 배포 템플릿 숨김)
+ * CUTE 수동 저장 v17 (배포 원본을 파일 목록 밖의 전용 자산으로 분리)
+ *  - v17: JupyterLite 기본 파일 목록을 비우고 템플릿을 전용 자산에서만 읽어
+ *         학생·교사 화면에 작업용 노트북 하나만 표시함
  *  - v16: 학생 화면도 접속 코드별 저장소로 분리하고, 작업 파일 생성 뒤
  *         배포용 CUTE_template.ipynb를 파일 목록에서 제거함
  *  - v15: 교사 템플릿/미리보기/학생 검토 화면의 브라우저 저장소를 분리하고
@@ -383,7 +385,11 @@
         if (!res.ok) throw new Error("기본 템플릿 조회 실패: HTTP " + res.status);
         var t = await res.json();
         await 상태.contents.save(TEMPLATE_FILE, { type: "notebook", format: "json", content: t });
-      } else await 상태.contents.get(TEMPLATE_FILE, { content: false });
+      } else {
+        var local = await fetch(new URL("../cute-assets/CUTE_template.ipynb", location.href));
+        if (!local.ok) throw new Error("배포 템플릿 조회 실패: HTTP " + local.status);
+        await 상태.contents.save(TEMPLATE_FILE, { type: "notebook", format: "json", content: await local.json() });
+      }
       상태.최근 = TEMPLATE_FILE;
       await 다시열기(TEMPLATE_FILE);
       try { parent.postMessage({ cute: "tpl-ready", ok: true, path: TEMPLATE_FILE }, "*"); } catch (e) {}
@@ -427,7 +433,7 @@
 
     try {
       var t = await fetch(API + "/api/template");                 // CUTE에 등록된 템플릿
-      if (!t.ok) t = await fetch(new URL("../files/CUTE_template.ipynb", location.href)); // 예비
+      if (!t.ok) t = await fetch(new URL("../cute-assets/CUTE_template.ipynb", location.href)); // 예비
       await 파일쓰기(await t.json());
       console.log("[CUTE] 템플릿으로 mywork.ipynb 를 만들었습니다.");
     } catch (e) { console.warn("[CUTE] 템플릿을 가져오지 못했습니다:", e); }
@@ -435,7 +441,12 @@
 
   async function 기본템플릿열기() {
     try {
-      await 상태.contents.get(TEMPLATE_FILE, { content: false });
+      try { await 상태.contents.get(TEMPLATE_FILE, { content: false }); }
+      catch (e) {
+        var source = await fetch(new URL("../cute-assets/CUTE_template.ipynb", location.href));
+        if (!source.ok) throw new Error("배포 템플릿을 불러오지 못했습니다.");
+        await 상태.contents.save(TEMPLATE_FILE, { type: "notebook", format: "json", content: await source.json() });
+      }
       await 다시열기(TEMPLATE_FILE);
       console.log("[CUTE] 기본 템플릿을 열었습니다.");
     } catch (e) { console.warn("[CUTE] 기본 템플릿 열기 실패:", e); }
@@ -444,7 +455,7 @@
   async function 미리보기준비() {
     try {
       await 모두닫기();
-      var res = await fetch(new URL("../files/CUTE_template.ipynb", location.href));
+      var res = await fetch(new URL("../cute-assets/CUTE_template.ipynb", location.href));
       if (!res.ok) throw new Error("기본 템플릿을 불러오지 못했습니다.");
       await 상태.contents.save(FILE, { type: "notebook", format: "json", content: await res.json() });
       상태.최근 = FILE;

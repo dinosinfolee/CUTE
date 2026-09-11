@@ -33,12 +33,14 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: JupyterLite 빌드
-        run: jupyter lite build --contents content --output-dir dist
+        run: jupyter lite build --output-dir dist
 
       - name: CUTE 연결 스크립트와 배색 삽입
         run: |
+          mkdir -p dist/cute-assets
+          cp content/CUTE_template.ipynb dist/cute-assets/CUTE_template.ipynb
           cp cute-storage.js dist/lab/cute-storage-v2.js
-          cp cute-bridge.js dist/lab/cute-bridge-v16.js
+          cp cute-bridge.js dist/lab/cute-bridge-v17.js
           cp cute-theme.css dist/lab/cute-theme.css
           python - <<'PY'
           from pathlib import Path
@@ -46,11 +48,11 @@ jobs:
           html = page.read_text(encoding="utf-8")
           marker = '    <script>\n      (async function () {'
           html = html.replace(marker, '    <script src="cute-storage-v2.js"></script>\n' + marker, 1)
-          html = html.replace('</head>', '<link rel="stylesheet" href="cute-theme.css"><script defer src="cute-bridge-v16.js"></script></head>', 1)
+          html = html.replace('</head>', '<link rel="stylesheet" href="cute-theme.css"><script defer src="cute-bridge-v17.js"></script></head>', 1)
           page.write_text(html, encoding="utf-8")
           PY
           grep -q cute-storage-v2 dist/lab/index.html
-          grep -q cute-bridge-v16 dist/lab/index.html
+          grep -q cute-bridge-v17 dist/lab/index.html
           echo "삽입 확인 완료"
 
       - name: Jekyll 처리 끄기
