@@ -4,7 +4,8 @@
  * JupyterLite는 같은 배포 주소의 모든 화면이 기본적으로 하나의 IndexedDB를
  * 공유합니다. 교사 미리보기와 기본 템플릿 편집기를 동시에 띄우면 서로의
  * 파일 목록과 열린 탭이 섞일 수 있으므로, 교사용 화면만 용도별 저장소로
- * 분리합니다. 학생 저장소는 기존 로컬 작업을 보존하기 위해 변경하지 않습니다.
+ * 분리합니다. 학생 화면도 접속 코드별 저장소를 사용하므로 같은 브라우저에서
+ * 교사·여러 학생 화면을 동시에 열어도 파일과 열린 탭이 섞이지 않습니다.
  *
  * 이 파일은 config-utils.js보다 먼저 실행되어야 합니다.
  */
@@ -25,8 +26,12 @@
     var kind = query.get("kind") === "auto" ? "auto" : "manual";
     scope = "teacher-review-" + code + "-" + kind;
   }
+  else if (surface === "student") {
+    var studentCode = (query.get("cute") || "unknown").replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 48);
+    scope = "student-" + studentCode + "-v1";
+  }
 
-  // 학생·독립 실행 화면은 기존 브라우저 작업을 잃지 않도록 기존 저장소를 씁니다.
+  // 쿼리가 없는 독립 실행 화면만 기존 저장소를 씁니다.
   if (!scope) return;
 
   var config = {};

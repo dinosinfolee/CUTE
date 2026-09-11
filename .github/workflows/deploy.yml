@@ -37,20 +37,20 @@ jobs:
 
       - name: CUTE 연결 스크립트와 배색 삽입
         run: |
-          cp cute-storage.js dist/lab/cute-storage-v1.js
-          cp cute-bridge.js dist/lab/cute-bridge-v15.js
+          cp cute-storage.js dist/lab/cute-storage-v2.js
+          cp cute-bridge.js dist/lab/cute-bridge-v16.js
           cp cute-theme.css dist/lab/cute-theme.css
           python - <<'PY'
           from pathlib import Path
           page = Path("dist/lab/index.html")
           html = page.read_text(encoding="utf-8")
           marker = '    <script>\n      (async function () {'
-          html = html.replace(marker, '    <script src="cute-storage-v1.js"></script>\n' + marker, 1)
-          html = html.replace('</head>', '<link rel="stylesheet" href="cute-theme.css"><script defer src="cute-bridge-v15.js"></script></head>', 1)
+          html = html.replace(marker, '    <script src="cute-storage-v2.js"></script>\n' + marker, 1)
+          html = html.replace('</head>', '<link rel="stylesheet" href="cute-theme.css"><script defer src="cute-bridge-v16.js"></script></head>', 1)
           page.write_text(html, encoding="utf-8")
           PY
-          grep -q cute-storage-v1 dist/lab/index.html
-          grep -q cute-bridge-v15 dist/lab/index.html
+          grep -q cute-storage-v2 dist/lab/index.html
+          grep -q cute-bridge-v16 dist/lab/index.html
           echo "삽입 확인 완료"
 
       - name: Jekyll 처리 끄기

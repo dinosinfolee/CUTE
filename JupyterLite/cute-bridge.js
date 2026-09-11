@@ -1,5 +1,7 @@
 /**
- * CUTE 수동 저장 v15 (교사용 저장소 분리 · 구버전 템플릿 제거 결과 보고)
+ * CUTE 수동 저장 v16 (학생별 저장소 분리 · 배포 템플릿 숨김)
+ *  - v16: 학생 화면도 접속 코드별 저장소로 분리하고, 작업 파일 생성 뒤
+ *         배포용 CUTE_template.ipynb를 파일 목록에서 제거함
  *  - v15: 교사 템플릿/미리보기/학생 검토 화면의 브라우저 저장소를 분리하고
  *         구버전 template.ipynb 제거 결과를 대시보드에 알림
  *  - v14: 배포 원본에서 빠진 template.ipynb를 재시도하며 완전히 정리
@@ -355,6 +357,23 @@
     await 구버전템플릿정리();
   }
 
+  async function 배포템플릿숨기기() {
+    if (TPL) return;
+    try {
+      var 것들 = 상태.app.shell.widgets ? Array.from(상태.app.shell.widgets("main")) : [];
+      for (var i = 0; i < 것들.length; i++) {
+        var w = 것들[i];
+        var 경로 = "";
+        try { 경로 = (w.context && w.context.path) || ""; } catch (e) {}
+        if (경로 !== TEMPLATE_FILE) continue;
+        try { if (w.context && w.context.model) w.context.model.dirty = false; } catch (e) {}
+        try { w.dispose(); } catch (e) {}
+      }
+    } catch (e) {}
+    await 파일완전삭제(TEMPLATE_FILE);
+    await 목록새로고침();
+  }
+
   async function 템플릿준비() {
     try {
       await 모두닫기();
@@ -532,6 +551,7 @@
       await 모두닫기();
       await 준비();
       await 데이터복원();
+      await 배포템플릿숨기기();
       목록새로고침();
       await 다시열기(FILE);
       console.log("[CUTE] 수동 저장 준비 완료");
