@@ -1,5 +1,7 @@
 /**
- * OwnThink 자동 저장 v9 (템플릿 단일화 · 불러온 뒤 노트북 자동 재열기)
+ * OwnThink 자동 저장 v10 (화면별 작업 파일 분리 · 템플릿 단일화)
+ *  - v10: 같은 브라우저의 학생 화면, 교사 미리보기, 교사 상세 보기와
+ *         템플릿 편집이 서로 다른 로컬 노트북 파일을 사용함
  *  - v9: 이전 브라우저 세션의 template.ipynb와 저장 확인창까지 자동 정리
  *  - v8: 템플릿 편집 모드에서 이전 template.ipynb를 제거하고
  *        OwnThink_template.ipynb 하나만 열고 저장함
@@ -29,7 +31,7 @@
 (function () {
   "use strict";
 
-  var FILE = "mywork.ipynb";
+  var FILE = "preview.ipynb";
   var TEMPLATE_FILE = "OwnThink_template.ipynb";
   var 주기 = 10 * 60 * 1000; // 10분
   var 상태 = { 해시: null, contents: null, app: null, 최근: null };
@@ -42,13 +44,17 @@
   /* 교사 보기 모드 — 교사 대시보드가 ?ownthink-view=1&code=..&kind=.. 로 엽니다.
      학생의 저장본과 데이터 파일을 그대로 열어 보되, 저장·제출은 하지 않습니다. */
   var VIEW = q.get("ownthink-view") === "1";
+  var PREVIEW = q.get("ownthink-preview") === "1";
   var VCODE = q.get("code") || "";
   var VKIND = q.get("kind") === "auto" ? "auto" : "manual";
-  if (!TPL && q.get("ownthink")) localStorage.setItem("ownthink_code", q.get("ownthink"));
-  if (q.get("api"))   localStorage.setItem("ownthink_api",  q.get("api"));
-  var CODE = localStorage.getItem("ownthink_code");
-  var API  = q.get("api") || localStorage.getItem("ownthink_api");
-  var CONNECTED = !!CODE && !!API;
+  var CODE = q.get("ownthink") || "";
+  var API  = q.get("api") || "";
+  var CONNECTED = !TPL && !VIEW && !PREVIEW && !!CODE && !!API;
+  function 안전이름(value) { return String(value || "unknown").replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 48); }
+  if (TPL) FILE = TEMPLATE_FILE;
+  else if (VIEW) FILE = "teacher-review-" + 안전이름(VCODE) + "-" + VKIND + ".ipynb";
+  else if (CONNECTED) FILE = "student-" + 안전이름(CODE) + ".ipynb";
+  else if (PREVIEW) FILE = "teacher-design-preview.ipynb";
   if (TPL || VIEW) { if (!API) { console.log("[OwnThink] 서버 주소가 없어 쉽니다."); return; } }
   else if (!CONNECTED) { console.log("[OwnThink] 독립 실행 모드로 기본 템플릿을 엽니다."); }
 
@@ -92,23 +98,19 @@
     } catch (e) { console.warn("[OwnThink] 문서 저장 실패(계속 진행):", e); }
   }
 
-  /* ---------- 작업 공간 소유자 확인 ----------
-     공용 PC 대비: 접속 코드가 바뀌었거나 교사 편집 모드로 전환됐으면
-     이전 사용자의 파일을 전부 비웁니다. (서버 저장본이 원본이므로 안전) */
+  /* ---------- 이전 버전 학생 파일 마이그레이션 ----------
+     화면마다 다른 파일을 사용하므로 다른 화면의 작업을 지우지 않습니다. */
   var 식별 = TPL ? "__TPL__" : (VIEW ? "__VIEW__" + VCODE + "__" + VKIND : CODE);
   async function 작업공간확인() {
+    if (!CONNECTED) return;
+    try { await 상태.contents.get(FILE, { content: false }); return; } catch (e) {}
     var 이전 = localStorage.getItem("ownthink_ws_owner");
-    if (이전 === 식별) return;
-    /* close-all 명령은 수정된 노트북이 있으면 저장 확인창을 띄워 정리를 멈춥니다. */
-    await 모두닫기();
+    if (이전 !== 식별) { try { localStorage.setItem("ownthink_ws_owner", 식별); } catch (e) {} return; }
     try {
-      var dir = await 상태.contents.get("", { content: true });
-      var items = (dir && dir.content) || [];
-      for (var i = 0; i < items.length; i++) {
-        try { await 상태.contents.delete(items[i].path); } catch (e) {}
-      }
-      console.log("[OwnThink] 사용자가 바뀌어 작업 공간을 비웠습니다.");
-    } catch (e) { console.warn("[OwnThink] 작업 공간 정리 실패:", e); }
+      var 이전파일 = await 상태.contents.get("mywork.ipynb", { content: true });
+      await 상태.contents.save(FILE, { type: "notebook", format: "json", content: 이전파일.content });
+      console.log("[OwnThink] 이전 학생 파일을 분리된 파일로 옮겼습니다:", FILE);
+    } catch (e) {}
     try { localStorage.setItem("ownthink_ws_owner", 식별); } catch (e) {}
   }
 
@@ -357,6 +359,17 @@
     } catch (e) { console.warn("[OwnThink] 기본 템플릿 열기 실패:", e); }
   }
 
+  async function 미리보기준비() {
+    try {
+      var res = await fetch(new URL("../files/OwnThink_template.ipynb", location.href));
+      if (!res.ok) throw new Error("기본 템플릿을 불러오지 못했습니다.");
+      await 상태.contents.save(FILE, { type: "notebook", format: "json", content: await res.json() });
+      상태.최근 = FILE;
+      await 다시열기(FILE);
+      console.log("[OwnThink] 교사 수업 설계 미리보기 준비 완료");
+    } catch (e) { console.warn("[OwnThink] 미리보기 준비 실패:", e); }
+  }
+
   /* ---------- 2. 10분마다 자동 저장 ---------- */
   function 해시(s) {
     var h = 0; for (var i = 0; i < s.length; i++) { h = (h * 31 + s.charCodeAt(i)) | 0; }
@@ -436,6 +449,7 @@
       await 작업공간확인();
       if (TPL)  { 템플릿준비(); return; }         // 편집 모드는 자동 저장을 돌리지 않습니다
       if (VIEW) { setInterval(확인창치우기, 1500); 보기준비(); return; }   // 교사 보기도 저장하지 않습니다
+      if (PREVIEW) { 미리보기준비(); return; }     // 수업 설계 미리보기는 학생 파일과 분리합니다
       if (!CONNECTED) { await 기본템플릿열기(); return; }
       await 준비();
       await 데이터복원();
