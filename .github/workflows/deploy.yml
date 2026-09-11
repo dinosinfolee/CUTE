@@ -37,10 +37,10 @@ jobs:
 
       - name: OwnThink 연결 스크립트와 배색 삽입
         run: |
-          cp ownthink-bridge.js dist/lab/ownthink-bridge-v10.js
+          cp ownthink-bridge.js dist/lab/ownthink-bridge-v11.js
           cp ownthink-theme.css dist/lab/ownthink-theme.css
-          sed -i 's#</head>#<link rel="stylesheet" href="ownthink-theme.css"><script defer src="ownthink-bridge-v10.js"></script></head>#' dist/lab/index.html
-          grep -q ownthink-bridge-v10 dist/lab/index.html
+          sed -i 's#</head>#<link rel="stylesheet" href="ownthink-theme.css"><script defer src="ownthink-bridge-v11.js"></script></head>#' dist/lab/index.html
+          grep -q ownthink-bridge-v11 dist/lab/index.html
           echo "삽입 확인 완료"
 
       - name: Jekyll 처리 끄기

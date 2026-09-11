@@ -1,5 +1,6 @@
 /**
- * OwnThink 자동 저장 v10 (화면별 작업 파일 분리 · 템플릿 단일화)
+ * OwnThink 자동 저장 v11 (화면별 작업 파일·열린 탭 분리 · 템플릿 단일화)
+ *  - v11: 각 화면이 시작될 때 그 화면에 복원된 이전 탭만 닫고 전용 파일만 표시함
  *  - v10: 같은 브라우저의 학생 화면, 교사 미리보기, 교사 상세 보기와
  *         템플릿 편집이 서로 다른 로컬 노트북 파일을 사용함
  *  - v9: 이전 브라우저 세션의 template.ipynb와 저장 확인창까지 자동 정리
@@ -301,6 +302,7 @@
 
   async function 템플릿준비() {
     try {
+      await 모두닫기();
       await 템플릿문서정리();
       var res = await fetch(API + "/api/template", { cache: "no-store" });
       if (!res.ok) throw new Error("기본 템플릿 조회 실패: HTTP " + res.status);
@@ -361,6 +363,7 @@
 
   async function 미리보기준비() {
     try {
+      await 모두닫기();
       var res = await fetch(new URL("../files/OwnThink_template.ipynb", location.href));
       if (!res.ok) throw new Error("기본 템플릿을 불러오지 못했습니다.");
       await 상태.contents.save(FILE, { type: "notebook", format: "json", content: await res.json() });
@@ -451,6 +454,7 @@
       if (VIEW) { setInterval(확인창치우기, 1500); 보기준비(); return; }   // 교사 보기도 저장하지 않습니다
       if (PREVIEW) { 미리보기준비(); return; }     // 수업 설계 미리보기는 학생 파일과 분리합니다
       if (!CONNECTED) { await 기본템플릿열기(); return; }
+      await 모두닫기();
       await 준비();
       await 데이터복원();
       목록새로고침();
