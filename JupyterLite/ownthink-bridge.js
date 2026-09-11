@@ -1,5 +1,5 @@
 /**
- * OwnThink 자동 저장 v11 (화면별 작업 파일·열린 탭 분리 · 템플릿 단일화)
+ * OwnThink 수동 저장 v11 (화면별 작업 파일·열린 탭 분리 · 템플릿 단일화)
  *  - v11: 각 화면이 시작될 때 그 화면에 복원된 이전 탭만 닫고 전용 파일만 표시함
  *  - v10: 같은 브라우저의 학생 화면, 교사 미리보기, 교사 상세 보기와
  *         템플릿 편집이 서로 다른 로컬 노트북 파일을 사용함
@@ -22,7 +22,7 @@
  *
  *  1. 앱이 켜지면 mywork.ipynb 가 없을 때 만들어 둡니다.
  *     서버 저장본이 있으면 그것을, 없으면 OwnThink_template.ipynb 를 바탕으로.
- *  2. 10분마다 mywork.ipynb 를 읽어 바뀌었을 때만 서버로 보냅니다.
+ *  2. 학생이 [클라우드에 저장]을 누르면 노트북과 CSV를 함께 서버로 보냅니다.
  *  3. 기록지의 [불러오기] 신호(postMessage)를 받아 저장본으로 되돌립니다.
  *
  * 개인 코드와 서버 주소는 기록지가 iframe 주소 뒤에 붙여 줍니다.
@@ -34,7 +34,6 @@
 
   var FILE = "preview.ipynb";
   var TEMPLATE_FILE = "OwnThink_template.ipynb";
-  var 주기 = 10 * 60 * 1000; // 10분
   var 상태 = { 해시: null, contents: null, app: null, 최근: null };
 
   /* ---------- 개인 코드와 서버 주소 ---------- */
@@ -56,20 +55,14 @@
   else if (VIEW) FILE = "teacher-review-" + 안전이름(VCODE) + "-" + VKIND + ".ipynb";
   else if (CONNECTED) FILE = "student-" + 안전이름(CODE) + ".ipynb";
   else if (PREVIEW) FILE = "teacher-design-preview.ipynb";
-  if (TPL || VIEW) { if (!API) { console.log("[OwnThink] 서버 주소가 없어 쉽니다."); return; } }
+  if (VIEW && !API) { console.log("[OwnThink] 서버 주소가 없어 교사 보기 모드를 시작할 수 없습니다."); return; }
+  if (TPL && !API) console.log("[OwnThink] 로컬 템플릿 편집 모드로 시작합니다.");
   else if (!CONNECTED) { console.log("[OwnThink] 독립 실행 모드로 기본 템플릿을 엽니다."); }
 
   /* ---------- 서버와 주고받기 ---------- */
   function 서버에서(kind) {
-    return fetch(API + "?api=load&code=" + encodeURIComponent(CODE) + "&kind=" + kind)
+    return fetch(API + "/api/workspace?code=" + encodeURIComponent(CODE) + "&kind=" + kind)
       .then(function (r) { return r.json(); });
-  }
-  function 서버로(문자열, 방식) {
-    return fetch(API, {
-      method: "POST",
-      headers: { "Content-Type": "text/plain;charset=utf-8" },
-      body: JSON.stringify({ action: "save", code: CODE, content: 문자열, mode: 방식 || "auto" })
-    }).then(function (r) { return r.json(); });
   }
 
   /* ---------- 파일 읽고 쓰기 (주피터랩 정식 API) ---------- */
@@ -100,7 +93,8 @@
   }
 
   /* ---------- 이전 버전 학생 파일 마이그레이션 ----------
-     화면마다 다른 파일을 사용하므로 다른 화면의 작업을 지우지 않습니다. */
+     v10부터는 화면마다 파일명이 다르므로 다른 화면의 파일을 지우지 않습니다.
+     같은 브라우저에서 학생과 교사 화면을 동시에 열어도 서로 덮어쓰지 않습니다. */
   var 식별 = TPL ? "__TPL__" : (VIEW ? "__VIEW__" + VCODE + "__" + VKIND : CODE);
   async function 작업공간확인() {
     if (!CONNECTED) return;
@@ -120,15 +114,16 @@
   async function 데이터복원(누구) {
     var 코드 = 누구 || CODE;
     try {
-      var r = await fetch(API + "/api/datalist?code=" + encodeURIComponent(코드))
+      var r = await fetch(API + "/api/workspace?code=" + encodeURIComponent(코드))
         .then(function (x) { return x.json(); });
       if (!r || !r.ok || !r.files || !r.files.length) return;
-      for (var i = 0; i < r.files.length; i++) {
-        var 이름 = r.files[i].name;
+      var 자료 = r.files.filter(function (file) { return file.kind === "data"; });
+      for (var i = 0; i < 자료.length; i++) {
+        var 이름 = 자료[i].name;
         try { await 상태.contents.get(이름); continue; } catch (e) { /* 없음 → 복원 */ }
         try {
-          var res = await fetch(API + "/api/nb?code=" + encodeURIComponent(코드)
-            + "&kind=data&name=" + encodeURIComponent(이름));
+          var res = await fetch(API + "/api/workspace?code=" + encodeURIComponent(코드)
+            + "&name=" + encodeURIComponent(이름));
           if (!res.ok) continue;
           var buf = new Uint8Array(await res.arrayBuffer());
           var 글 = "", 토막 = 0x8000;
@@ -223,22 +218,42 @@
     } catch (e) { return "python"; }
   }
 
+  /* ---------- 학생 파일을 내 컴퓨터에 내려받기 ---------- */
+  async function 노트북내려받기() {
+    await 문서먼저저장();
+    var 경로 = 대상경로();
+    await 상태.app.commands.execute("docmanager:download", { path: 경로 });
+    return { path: 경로, count: 1 };
+  }
+
+  async function 데이터내려받기() {
+    var dir = await 상태.contents.get("", { content: true });
+    var items = ((dir && dir.content) || []).filter(function (item) {
+      return item && item.type === "file" && !/\.ipynb$/i.test(item.path || item.name || "");
+    });
+    if (!items.length) throw new Error("저장할 데이터 파일이 없습니다.");
+    for (var i = 0; i < items.length; i++) {
+      await 상태.app.commands.execute("docmanager:download", { path: items[i].path });
+    }
+    return { count: items.length };
+  }
+
   async function 보기준비() {
     /* 복원 기능이 옛 학생의 문서를 먼저 열어 둘 수 있어, 시작하자마자 전부 닫습니다 */
     await 모두닫기();
     /* 데이터 파일을 먼저 되살립니다 — 노트북이 잘못돼도 파일은 보이게 */
     try { await 데이터복원(VCODE); } catch (e) { console.warn("[OwnThink] 데이터 복원 실패:", e); }
     try {
-      var res = await fetch(API + "/api/load?code=" + encodeURIComponent(VCODE) + "&kind=" + VKIND);
+      var res = await fetch(API + "/api/workspace?code=" + encodeURIComponent(VCODE) + "&kind=" + VKIND);
       var r = null;
       try { r = await res.json(); }
       catch (e) { 보기알림("응답 해석", false, "HTTP " + res.status); return; }
       if (!r || !r.ok) { 보기알림("저장본 조회", false, (r && r.error) || "응답 없음"); return; }
-      if (!r.exists || !r.content) {
+      if (!r.exists || !r.notebook || !r.notebook.content) {
         /* 저장본이 없는 학생 — 빈 노트북에 안내 한 줄을 담아 보여 줍니다.
            앞 학생 화면이 남은 것으로 오해하지 않도록 명시적으로 비웁니다. */
         var 빈 = { cells: [{ cell_type: "markdown", metadata: {},
-          source: ["**이 학생은 저장된 노트북이 없습니다.**\n\n제출본·자동 저장본이 아직 서버에 올라오지 않았습니다."] }],
+          source: ["**이 학생은 저장된 노트북이 없습니다.**\n\n학생이 아직 클라우드에 저장하지 않았습니다."] }],
           metadata: {}, nbformat: 4, nbformat_minor: 5 };
         try {
           await 상태.contents.save(FILE, { type: "notebook", format: "json", content: 빈 });
@@ -248,12 +263,12 @@
         보기알림("저장본 없음", true, "");
         return;
       }
-      var 객체 = r.content;
+      var 객체 = r.notebook.content;
       for (var k = 0; k < 2 && typeof 객체 === "string"; k++) {   // 겹으로 감싸인 JSON도 풉니다
         try { 객체 = JSON.parse(객체); } catch (e) { break; }
       }
       if (!객체 || typeof 객체 !== "object" || !객체.cells) {
-        보기알림("형식 검사", false, "저장본이 노트북 형식이 아님 · 앞부분: " + String(r.content).slice(0, 80)); return;
+        보기알림("형식 검사", false, "저장본이 노트북 형식이 아님 · 앞부분: " + String(r.notebook.content).slice(0, 80)); return;
       }
       try { await 상태.contents.save(FILE, { type: "notebook", format: "json", content: 객체 }); }
       catch (e) { 보기알림("파일 쓰기", false, e); return; }
@@ -285,7 +300,8 @@
   }
 
   async function 템플릿문서정리() {
-    /* 세션 복원으로 열린 구버전/현재 템플릿 탭을 저장 확인 없이 닫습니다. */
+    /* 세션 복원으로 열린 구버전/현재 템플릿 탭을 먼저 닫습니다.
+       템플릿 모드에선 서버 저장본이 원본이므로 저장 확인 없이 닫아도 안전합니다. */
     try {
       var 것들 = 상태.app.shell.widgets ? Array.from(상태.app.shell.widgets("main")) : [];
       for (var i = 0; i < 것들.length; i++) {
@@ -304,10 +320,12 @@
     try {
       await 모두닫기();
       await 템플릿문서정리();
-      var res = await fetch(API + "/api/template", { cache: "no-store" });
-      if (!res.ok) throw new Error("기본 템플릿 조회 실패: HTTP " + res.status);
-      var t = await res.json();
-      await 상태.contents.save(TEMPLATE_FILE, { type: "notebook", format: "json", content: t });
+      if (API) {
+        var res = await fetch(API + "/api/template", { cache: "no-store" });
+        if (!res.ok) throw new Error("기본 템플릿 조회 실패: HTTP " + res.status);
+        var t = await res.json();
+        await 상태.contents.save(TEMPLATE_FILE, { type: "notebook", format: "json", content: t });
+      } else await 상태.contents.get(TEMPLATE_FILE, { content: false });
       상태.최근 = TEMPLATE_FILE;
       await 다시열기(TEMPLATE_FILE);
       console.log("[OwnThink] 템플릿 편집 준비 완료");
@@ -318,7 +336,7 @@
     if (!TPL || !m || m.ownthink !== "tpl-pull" || !상태.contents) return;
     try {
       await 문서먼저저장();
-      /* 편집 화면에서는 기본 템플릿 하나만 저장합니다. */
+      /* 편집 화면에서 다른 탭이 선택되어도 기본 템플릿 하나만 저장합니다. */
       var p = TEMPLATE_FILE;
       var f = await 상태.contents.get(p, { content: true });
       var s = typeof f.content === "string" ? f.content : JSON.stringify(f.content);
@@ -338,8 +356,8 @@
 
     try {
       var r = await 서버에서("auto");
-      if (r && r.ok && r.exists) {
-        await 파일쓰기(JSON.parse(r.content));
+      if (r && r.ok && r.exists && r.notebook && r.notebook.content) {
+        await 파일쓰기(JSON.parse(r.notebook.content));
         console.log("[OwnThink] 서버 저장본으로 mywork.ipynb 를 만들었습니다.");
         return;
       }
@@ -356,7 +374,7 @@
   async function 기본템플릿열기() {
     try {
       await 상태.contents.get(TEMPLATE_FILE, { content: false });
-      await 상태.app.commands.execute("docmanager:open", { path: TEMPLATE_FILE });
+      await 다시열기(TEMPLATE_FILE);
       console.log("[OwnThink] 기본 템플릿을 열었습니다.");
     } catch (e) { console.warn("[OwnThink] 기본 템플릿 열기 실패:", e); }
   }
@@ -373,43 +391,57 @@
     } catch (e) { console.warn("[OwnThink] 미리보기 준비 실패:", e); }
   }
 
-  /* ---------- 2. 10분마다 자동 저장 ---------- */
-  function 해시(s) {
-    var h = 0; for (var i = 0; i < s.length; i++) { h = (h * 31 + s.charCodeAt(i)) | 0; }
-    return h + ":" + s.length;
-  }
-  async function 저장시도() {
-    if (!상태.contents) return "대기중";
-    try {
-      await 문서먼저저장();
-      var 경로 = 대상경로();
-      var m = await 파일읽기(경로);
-      var s = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
-      var h = 해시(s);
-      if (h === 상태.해시) return "변화없음";
-      var r = await 서버로(s);
-      if (r && r.ok) { 상태.해시 = h; console.log("[OwnThink] 자동 저장 (" + 경로 + ")", r.time); return "저장됨"; }
-      console.warn("[OwnThink] 저장 실패:", r && r.error); return "실패";
-    } catch (e) { console.warn("[OwnThink] 저장 중 오류:", e); return "오류"; }
+  /* ---------- 2. 노트북과 CSV를 사용자가 요청할 때만 클라우드에 저장 ---------- */
+  async function 클라우드저장() {
+    if (!CONNECTED) throw new Error("학생 접속 코드 또는 서버 주소가 없습니다.");
+    await 문서먼저저장();
+    var 경로 = 대상경로();
+    var 노트북 = await 파일읽기(경로);
+    var 파일들 = [{
+      name: 경로.split("/").pop(), kind: "notebook", encoding: "utf8",
+      contentType: "application/x-ipynb+json",
+      content: typeof 노트북.content === "string" ? 노트북.content : JSON.stringify(노트북.content)
+    }];
+    var dir = await 상태.contents.get("", { content: true });
+    var csv들 = ((dir && dir.content) || []).filter(function (item) {
+      return item && item.type === "file" && /\.csv$/i.test(item.path || item.name || "");
+    });
+    for (var i = 0; i < csv들.length; i++) {
+      var csv = await 상태.contents.get(csv들[i].path, { content: true });
+      파일들.push({ name: csv들[i].name || csv들[i].path, kind: "data",
+        encoding: csv.format === "base64" ? "base64" : "utf8", contentType: csv.mimetype || "text/csv",
+        content: typeof csv.content === "string" ? csv.content : JSON.stringify(csv.content) });
+    }
+    return fetch(API + "/api/workspace", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code: CODE, classId: "2-3", lessonId: "data-science-project", files: 파일들 })
+    }).then(function (response) { return response.json(); });
   }
 
   /* ---------- 3. 기록지의 [불러오기]·[제출] 신호 (학생 모드 전용) ---------- */
   window.addEventListener("message", async function (ev) {
     var m = ev.data;
-    if (TPL || !m || !상태.contents) return;
+    if (!m || !상태.contents) return;
 
-    // [제출] — 학생이 열어 둔 노트북을 먼저 저장시킨 뒤 그대로 서버에 올립니다.
+    if (m.ownthink === "download-notebook" || m.ownthink === "download-data") {
+      try {
+        var 내려받기결과 = m.ownthink === "download-notebook" ? await 노트북내려받기() : await 데이터내려받기();
+        ev.source && ev.source.postMessage({ ownthink: "download-result", ok: true, count: 내려받기결과.count, path: 내려받기결과.path || "" }, "*");
+      } catch (e) {
+        ev.source && ev.source.postMessage({ ownthink: "download-result", ok: false, error: String(e) }, "*");
+      }
+      return;
+    }
+
+    if (TPL) return;
+
+    // [클라우드 저장] — 버튼을 누른 시점의 노트북과 CSV만 서버에 올립니다.
     if (m.ownthink === "push") {
       try {
-        await 문서먼저저장();
-        var 경로2 = 대상경로();
-        var f = await 파일읽기(경로2);
-        var s2 = typeof f.content === "string" ? f.content : JSON.stringify(f.content);
-        var r2 = await 서버로(s2, "manual");
-        상태.해시 = null;   // 다음 자동 저장 때 다시 비교하도록
-        console.log("[OwnThink] 제출 (" + 경로2 + ")", r2 && r2.time);
+        var r2 = await 클라우드저장();
+        console.log("[OwnThink] 수동 저장", r2 && r2.time);
         ev.source && ev.source.postMessage(
-          { ownthink: "push-result", ok: !!(r2 && r2.ok), time: r2 && r2.time, path: 경로2, error: r2 && r2.error }, "*");
+          { ownthink: "push-result", ok: !!(r2 && r2.ok), time: r2 && r2.time, count: r2 && r2.count, error: r2 && r2.error }, "*");
       } catch (e) {
         ev.source && ev.source.postMessage({ ownthink: "push-result", ok: false, error: String(e) }, "*");
       }
@@ -419,11 +451,11 @@
     if (m.ownthink !== "load") return;
     try {
       var r = await 서버에서(m.kind === "manual" ? "manual" : "auto");
-      if (!r.ok || !r.exists) {
+      if (!r.ok || !r.exists || !r.notebook || !r.notebook.content) {
         ev.source && ev.source.postMessage({ ownthink: "load-result", ok: false, error: r.error || "저장본 없음" }, "*");
         return;
       }
-      await 파일쓰기(JSON.parse(r.content));
+      await 파일쓰기(JSON.parse(r.notebook.content));
       상태.해시 = null;
       /* 불러온 내용이 화면에 바로 보이도록 노트북을 다시 엽니다.
          실패해도 파일은 이미 바뀌었으므로, 학생에게 직접 열라고 안내합니다. */
@@ -450,7 +482,7 @@
       /* 예전 버전이 만든 template.ipynb는 어떤 모드로 열어도 남기지 않습니다. */
       await 구버전템플릿정리();
       await 작업공간확인();
-      if (TPL)  { 템플릿준비(); return; }         // 편집 모드는 자동 저장을 돌리지 않습니다
+      if (TPL)  { 템플릿준비(); return; }         // 편집 모드는 교사 저장 신호에만 응답합니다
       if (VIEW) { setInterval(확인창치우기, 1500); 보기준비(); return; }   // 교사 보기도 저장하지 않습니다
       if (PREVIEW) { 미리보기준비(); return; }     // 수업 설계 미리보기는 학생 파일과 분리합니다
       if (!CONNECTED) { await 기본템플릿열기(); return; }
@@ -458,14 +490,10 @@
       await 준비();
       await 데이터복원();
       목록새로고침();
-      setInterval(저장시도, 주기);
-      document.addEventListener("visibilitychange", function () {
-        if (document.visibilityState === "hidden") 저장시도();
-      });
-      console.log("[OwnThink] 자동 저장 준비 완료 (10분마다)");
+      await 다시열기(FILE);
+      console.log("[OwnThink] 수동 저장 준비 완료");
     });
   }, 400);
   // 2분이 지나도 앱을 못 찾으면 포기하고 로그만 남깁니다.
   setTimeout(function () { clearInterval(기다림); }, 120000);
 })();
-
