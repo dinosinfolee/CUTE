@@ -150,6 +150,9 @@
      복원된 문서에 '수정됨' 표시가 붙어 있으면 닫을 때 저장 확인창이 떠서
      모든 진행을 막으므로, 표시를 지운 뒤 닫습니다. */
   async function 모두닫기() {
+    /* 이전 세션에서 이미 떠 있던 저장 확인창을 먼저 닫습니다. */
+    확인창치우기();
+    await new Promise(function (resolve) { setTimeout(resolve, 80); });
     try {
       var 것들 = 상태.app.shell.widgets ? Array.from(상태.app.shell.widgets("main")) : [];
       for (var i = 0; i < 것들.length; i++) {
@@ -159,6 +162,10 @@
         try { 것들[i].dispose(); } catch (e) {}
       }
     } catch (e) {}
+    /* dispose 뒤 비동기로 뜨는 확인창까지 정리한 후 다음 파일 작업을 진행합니다. */
+    await new Promise(function (resolve) { setTimeout(resolve, 80); });
+    확인창치우기();
+    await new Promise(function (resolve) { setTimeout(resolve, 80); });
   }
   /* 혹시라도 "Save your work" 확인창이 뜨면 Discard를 눌러 치웁니다 (보기 모드 전용 안전망) */
   function 확인창치우기() {
@@ -255,6 +262,24 @@
   }
 
   /* ---------- 템플릿 편집 모드 ---------- */
+  async function 구버전템플릿정리() {
+    try {
+      var 것들 = 상태.app.shell.widgets ? Array.from(상태.app.shell.widgets("main")) : [];
+      for (var i = 0; i < 것들.length; i++) {
+        var w = 것들[i];
+        var 경로 = "";
+        try { 경로 = (w.context && w.context.path) || ""; } catch (e) {}
+        if (경로 !== "template.ipynb") continue;
+        try { if (w.context && w.context.model) w.context.model.dirty = false; } catch (e) {}
+        try { w.dispose(); } catch (e) {}
+      }
+    } catch (e) {}
+    await new Promise(function (resolve) { setTimeout(resolve, 80); });
+    확인창치우기();
+    try { await 상태.contents.delete("template.ipynb"); } catch (e) {}
+    await 목록새로고침();
+  }
+
   async function 템플릿문서정리() {
     /* 세션 복원으로 열린 구버전/현재 템플릿 탭을 저장 확인 없이 닫습니다. */
     try {
@@ -268,8 +293,7 @@
         try { w.dispose(); } catch (e) {}
       }
     } catch (e) {}
-    try { await 상태.contents.delete("template.ipynb"); } catch (e) {}
-    await 목록새로고침();
+    await 구버전템플릿정리();
   }
 
   async function 템플릿준비() {
@@ -406,6 +430,8 @@
       상태.contents = app.serviceManager.contents;
       /* 세션 복원이 옛 문서를 늦게 되살리므로, 복원이 끝나기를 기다렸다가 정리합니다 */
       try { await app.restored; } catch (e) {}
+      /* 예전 버전이 만든 template.ipynb는 어떤 모드로 열어도 남기지 않습니다. */
+      await 구버전템플릿정리();
       await 작업공간확인();
       if (TPL)  { 템플릿준비(); return; }         // 편집 모드는 자동 저장을 돌리지 않습니다
       if (VIEW) { setInterval(확인창치우기, 1500); 보기준비(); return; }   // 교사 보기도 저장하지 않습니다
