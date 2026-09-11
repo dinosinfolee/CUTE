@@ -19,16 +19,16 @@
   var surface = query.get("cute-surface") || "";
   var scope = "";
 
-  if (surface === "teacher-template") scope = "teacher-template-v2";
-  else if (surface === "teacher-design") scope = "teacher-design-v2";
+  if (surface === "teacher-template") scope = "teacher-template-v3";
+  else if (surface === "teacher-design") scope = "teacher-design-v3";
   else if (surface === "teacher-review") {
     var code = (query.get("code") || "unknown").replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 48);
     var kind = query.get("kind") === "auto" ? "auto" : "manual";
-    scope = "teacher-review-" + code + "-" + kind + "-v2";
+    scope = "teacher-review-" + code + "-" + kind + "-v3";
   }
   else if (surface === "student") {
     var studentCode = (query.get("cute") || "unknown").replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 48);
-    scope = "student-" + studentCode + "-v2";
+    scope = "student-" + studentCode + "-v3";
   }
 
   // 쿼리가 없는 독립 실행 화면만 기존 저장소를 씁니다.
