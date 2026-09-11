@@ -1,5 +1,7 @@
 /**
- * CUTE 수동 저장 v14 (구버전 정적 템플릿 제거 확인 · 화면별 작업 파일 분리)
+ * CUTE 수동 저장 v15 (교사용 저장소 분리 · 구버전 템플릿 제거 결과 보고)
+ *  - v15: 교사 템플릿/미리보기/학생 검토 화면의 브라우저 저장소를 분리하고
+ *         구버전 template.ipynb 제거 결과를 대시보드에 알림
  *  - v14: 배포 원본에서 빠진 template.ipynb를 재시도하며 완전히 정리
  *  - v12: 현재 노트북·CSV 저장 API 형식과 배포 코드를 일치시킴
  *  - v11: 각 화면이 시작될 때 그 화면에 복원된 이전 탭만 닫고 전용 파일만 표시함
@@ -295,10 +297,23 @@
   async function 파일완전삭제(경로) {
     var 마지막오류 = null;
     for (var 시도 = 0; 시도 < 4; 시도++) {
+      try {
+        var 체크포인트들 = await 상태.contents.listCheckpoints(경로);
+        for (var 번호 = 0; 번호 < 체크포인트들.length; 번호++)
+          await 상태.contents.deleteCheckpoint(경로, 체크포인트들[번호].id);
+      } catch (e) {}
       try { await 상태.contents.delete(경로); } catch (e) { 마지막오류 = e; }
       await new Promise(function (resolve) { setTimeout(resolve, 120 * (시도 + 1)); });
-      try { await 상태.contents.get(경로, { content: false }); }
-      catch (e) { return true; }
+      try {
+        var 루트 = await 상태.contents.get("", { content: true });
+        var 남음 = ((루트 && 루트.content) || []).some(function (item) {
+          return item && String(item.path || item.name || "").replace(/^\/+/, "") === 경로;
+        });
+        if (!남음) return true;
+      } catch (e) {
+        try { await 상태.contents.get(경로, { content: false }); }
+        catch (e2) { return true; }
+      }
     }
     console.warn("[CUTE] 구버전 파일을 제거하지 못했습니다:", 경로, 마지막오류);
     return false;
@@ -318,8 +333,9 @@
     } catch (e) {}
     await new Promise(function (resolve) { setTimeout(resolve, 80); });
     확인창치우기();
-    await 파일완전삭제("template.ipynb");
+    var 제거됨 = await 파일완전삭제("template.ipynb");
     await 목록새로고침();
+    return 제거됨;
   }
 
   async function 템플릿문서정리() {
@@ -351,8 +367,12 @@
       } else await 상태.contents.get(TEMPLATE_FILE, { content: false });
       상태.최근 = TEMPLATE_FILE;
       await 다시열기(TEMPLATE_FILE);
+      try { parent.postMessage({ cute: "tpl-ready", ok: true, path: TEMPLATE_FILE }, "*"); } catch (e) {}
       console.log("[CUTE] 템플릿 편집 준비 완료");
-    } catch (e) { console.warn("[CUTE] 템플릿 준비 실패:", e); }
+    } catch (e) {
+      try { parent.postMessage({ cute: "tpl-ready", ok: false, error: String(e) }, "*"); } catch (e2) {}
+      console.warn("[CUTE] 템플릿 준비 실패:", e);
+    }
   }
   window.addEventListener("message", async function (ev) {
     var m = ev.data;
