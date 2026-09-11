@@ -37,10 +37,10 @@ jobs:
 
       - name: CUTE 연결 스크립트와 배색 삽입
         run: |
-          cp cute-bridge.js dist/lab/cute-bridge-v13.js
+          cp cute-bridge.js dist/lab/cute-bridge-v14.js
           cp cute-theme.css dist/lab/cute-theme.css
-          sed -i 's#</head>#<link rel="stylesheet" href="cute-theme.css"><script defer src="cute-bridge-v13.js"></script></head>#' dist/lab/index.html
-          grep -q cute-bridge-v13 dist/lab/index.html
+          sed -i 's#</head>#<link rel="stylesheet" href="cute-theme.css"><script defer src="cute-bridge-v14.js"></script></head>#' dist/lab/index.html
+          grep -q cute-bridge-v14 dist/lab/index.html
           echo "삽입 확인 완료"
 
       - name: Jekyll 처리 끄기

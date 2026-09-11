@@ -1,5 +1,6 @@
 /**
- * CUTE 수동 저장 v12 (화면별 작업 파일·열린 탭 분리 · 최신 저장 API)
+ * CUTE 수동 저장 v14 (구버전 정적 템플릿 제거 확인 · 화면별 작업 파일 분리)
+ *  - v14: 배포 원본에서 빠진 template.ipynb를 재시도하며 완전히 정리
  *  - v12: 현재 노트북·CSV 저장 API 형식과 배포 코드를 일치시킴
  *  - v11: 각 화면이 시작될 때 그 화면에 복원된 이전 탭만 닫고 전용 파일만 표시함
  *  - v10: 같은 브라우저의 학생 화면, 교사 미리보기, 교사 상세 보기와
@@ -291,6 +292,18 @@
   }
 
   /* ---------- 템플릿 편집 모드 ---------- */
+  async function 파일완전삭제(경로) {
+    var 마지막오류 = null;
+    for (var 시도 = 0; 시도 < 4; 시도++) {
+      try { await 상태.contents.delete(경로); } catch (e) { 마지막오류 = e; }
+      await new Promise(function (resolve) { setTimeout(resolve, 120 * (시도 + 1)); });
+      try { await 상태.contents.get(경로, { content: false }); }
+      catch (e) { return true; }
+    }
+    console.warn("[CUTE] 구버전 파일을 제거하지 못했습니다:", 경로, 마지막오류);
+    return false;
+  }
+
   async function 구버전템플릿정리() {
     try {
       var 것들 = 상태.app.shell.widgets ? Array.from(상태.app.shell.widgets("main")) : [];
@@ -305,7 +318,7 @@
     } catch (e) {}
     await new Promise(function (resolve) { setTimeout(resolve, 80); });
     확인창치우기();
-    try { await 상태.contents.delete("template.ipynb"); } catch (e) {}
+    await 파일완전삭제("template.ipynb");
     await 목록새로고침();
   }
 
