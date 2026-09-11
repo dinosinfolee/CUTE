@@ -1,5 +1,7 @@
 /**
- * OwnThink 자동 저장 v6.2 (불러온 뒤 노트북 자동 재열기)
+ * OwnThink 자동 저장 v8 (템플릿 단일화 · 불러온 뒤 노트북 자동 재열기)
+ *  - v8: 템플릿 편집 모드에서 이전 template.ipynb를 제거하고
+ *        OwnThink_template.ipynb 하나만 열고 저장함
  *  - v6.2: 저장본을 불러오면 노트북을 자동으로 다시 열어 바로 보이게 함
  *  - v5: 템플릿 편집 모드(?ownthink-template=1)
  *  - v6: 사용자가 바뀌면(다른 접속 코드·편집 모드 전환) 작업 공간을 비우고
@@ -15,7 +17,7 @@
  * 그래서 부팅에 끼어들 일이 없습니다.
  *
  *  1. 앱이 켜지면 mywork.ipynb 가 없을 때 만들어 둡니다.
- *     서버 저장본이 있으면 그것을, 없으면 template.ipynb 를 바탕으로.
+ *     서버 저장본이 있으면 그것을, 없으면 OwnThink_template.ipynb 를 바탕으로.
  *  2. 10분마다 mywork.ipynb 를 읽어 바뀌었을 때만 서버로 보냅니다.
  *  3. 기록지의 [불러오기] 신호(postMessage)를 받아 저장본으로 되돌립니다.
  *
@@ -27,6 +29,7 @@
   "use strict";
 
   var FILE = "mywork.ipynb";
+  var TEMPLATE_FILE = "OwnThink_template.ipynb";
   var 주기 = 10 * 60 * 1000; // 10분
   var 상태 = { 해시: null, contents: null, app: null, 최근: null };
 
@@ -95,7 +98,8 @@
   async function 작업공간확인() {
     var 이전 = localStorage.getItem("ownthink_ws_owner");
     if (이전 === 식별) return;
-    try { await 상태.app.commands.execute("application:close-all"); } catch (e) {}
+    /* close-all 명령은 수정된 노트북이 있으면 저장 확인창을 띄워 정리를 멈춥니다. */
+    await 모두닫기();
     try {
       var dir = await 상태.contents.get("", { content: true });
       var items = (dir && dir.content) || [];
@@ -251,11 +255,32 @@
   }
 
   /* ---------- 템플릿 편집 모드 ---------- */
+  async function 템플릿문서정리() {
+    /* 세션 복원으로 열린 구버전/현재 템플릿 탭을 저장 확인 없이 닫습니다. */
+    try {
+      var 것들 = 상태.app.shell.widgets ? Array.from(상태.app.shell.widgets("main")) : [];
+      for (var i = 0; i < 것들.length; i++) {
+        var w = 것들[i];
+        var 경로 = "";
+        try { 경로 = (w.context && w.context.path) || ""; } catch (e) {}
+        if (경로 !== "template.ipynb" && 경로 !== TEMPLATE_FILE) continue;
+        try { if (w.context && w.context.model) w.context.model.dirty = false; } catch (e) {}
+        try { w.dispose(); } catch (e) {}
+      }
+    } catch (e) {}
+    try { await 상태.contents.delete("template.ipynb"); } catch (e) {}
+    await 목록새로고침();
+  }
+
   async function 템플릿준비() {
     try {
-      var t = await fetch(API + "/api/template").then(function (r) { return r.json(); });
-      await 상태.contents.save("template.ipynb", { type: "notebook", format: "json", content: t });
-      await 상태.app.commands.execute("docmanager:open", { path: "template.ipynb" });
+      await 템플릿문서정리();
+      var res = await fetch(API + "/api/template", { cache: "no-store" });
+      if (!res.ok) throw new Error("기본 템플릿 조회 실패: HTTP " + res.status);
+      var t = await res.json();
+      await 상태.contents.save(TEMPLATE_FILE, { type: "notebook", format: "json", content: t });
+      상태.최근 = TEMPLATE_FILE;
+      await 다시열기(TEMPLATE_FILE);
       console.log("[OwnThink] 템플릿 편집 준비 완료");
     } catch (e) { console.warn("[OwnThink] 템플릿 준비 실패:", e); }
   }
@@ -264,11 +289,8 @@
     if (!TPL || !m || m.ownthink !== "tpl-pull" || !상태.contents) return;
     try {
       await 문서먼저저장();
-      var p = 상태.최근 || "template.ipynb";
-      try {
-        var w = 상태.app.shell.currentWidget;
-        if (w && w.context && /\.ipynb$/i.test(w.context.path || "")) p = w.context.path;
-      } catch (e) {}
+      /* 편집 화면에서는 기본 템플릿 하나만 저장합니다. */
+      var p = TEMPLATE_FILE;
       var f = await 상태.contents.get(p, { content: true });
       var s = typeof f.content === "string" ? f.content : JSON.stringify(f.content);
       ev.source && ev.source.postMessage({ ownthink: "tpl-content", ok: true, content: s, path: p }, "*");
@@ -304,8 +326,8 @@
 
   async function 기본템플릿열기() {
     try {
-      await 상태.contents.get("OwnThink_template.ipynb", { content: false });
-      await 상태.app.commands.execute("docmanager:open", { path: "OwnThink_template.ipynb" });
+      await 상태.contents.get(TEMPLATE_FILE, { content: false });
+      await 상태.app.commands.execute("docmanager:open", { path: TEMPLATE_FILE });
       console.log("[OwnThink] 기본 템플릿을 열었습니다.");
     } catch (e) { console.warn("[OwnThink] 기본 템플릿 열기 실패:", e); }
   }
