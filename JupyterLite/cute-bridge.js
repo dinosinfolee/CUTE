@@ -1,5 +1,6 @@
 /**
- * CUTE 수동 저장 v19 (빌드 원본과 사용자 파일 완전 분리)
+ * CUTE 수동 저장 v20 (CSV 5개·합계 5MiB 제한 및 삭제 동기화)
+ *  - v20: CSV 저장 전 개수·용량을 검사하고 로컬에서 지운 CSV를 클라우드에서도 정리함
  *  - v19: 빈 콘텐츠로 JupyterLite를 빌드해 배포 원본이 파일 목록에
  *         자동 주입되는 경로를 제거함
  *  - v18: JupyterLite 기본 설정을 불러온 직후 화면별 저장소 설정을 주입함
@@ -69,6 +70,13 @@
   var VKIND = q.get("kind") === "auto" ? "auto" : "manual";
   var CODE = q.get("cute") || "";
   var API  = q.get("api") || "";
+  var DEMO_SESSION = q.get("cute-session") || "";
+  function 서버요청(path, options) {
+    if (!DEMO_SESSION) return fetch(API + path, options);
+    var headers = new Headers(options && options.headers);
+    headers.set("X-CUTE-Test-Session", DEMO_SESSION);
+    return fetch(API + path, Object.assign({}, options, { headers: headers }));
+  }
   var CONNECTED = !TPL && !VIEW && !PREVIEW && !!CODE && !!API;
   function 안전이름(value) { return String(value || "unknown").replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 48); }
   if (TPL) FILE = TEMPLATE_FILE;
@@ -81,7 +89,7 @@
 
   /* ---------- 서버와 주고받기 ---------- */
   function 서버에서(kind) {
-    return fetch(API + "/api/workspace?code=" + encodeURIComponent(CODE) + "&kind=" + kind)
+    return 서버요청("/api/workspace?code=" + encodeURIComponent(CODE) + "&kind=" + kind)
       .then(function (r) { return r.json(); });
   }
 
@@ -134,7 +142,7 @@
   async function 데이터복원(누구) {
     var 코드 = 누구 || CODE;
     try {
-      var r = await fetch(API + "/api/workspace?code=" + encodeURIComponent(코드))
+      var r = await 서버요청("/api/workspace?code=" + encodeURIComponent(코드))
         .then(function (x) { return x.json(); });
       if (!r || !r.ok || !r.files || !r.files.length) return;
       var 자료 = r.files.filter(function (file) { return file.kind === "data"; });
@@ -142,7 +150,7 @@
         var 이름 = 자료[i].name;
         try { await 상태.contents.get(이름); continue; } catch (e) { /* 없음 → 복원 */ }
         try {
-          var res = await fetch(API + "/api/workspace?code=" + encodeURIComponent(코드)
+          var res = await 서버요청("/api/workspace?code=" + encodeURIComponent(코드)
             + "&name=" + encodeURIComponent(이름));
           if (!res.ok) continue;
           var buf = new Uint8Array(await res.arrayBuffer());
@@ -264,7 +272,7 @@
     /* 데이터 파일을 먼저 되살립니다 — 노트북이 잘못돼도 파일은 보이게 */
     try { await 데이터복원(VCODE); } catch (e) { console.warn("[CUTE] 데이터 복원 실패:", e); }
     try {
-      var res = await fetch(API + "/api/workspace?code=" + encodeURIComponent(VCODE) + "&kind=" + VKIND);
+      var res = await 서버요청("/api/workspace?code=" + encodeURIComponent(VCODE) + "&kind=" + VKIND);
       var r = null;
       try { r = await res.json(); }
       catch (e) { 보기알림("응답 해석", false, "HTTP " + res.status); return; }
@@ -384,7 +392,7 @@
       await 모두닫기();
       await 템플릿문서정리();
       if (API) {
-        var res = await fetch(API + "/api/template", { cache: "no-store" });
+        var res = await 서버요청("/api/template", { cache: "no-store" });
         if (!res.ok) throw new Error("기본 템플릿 조회 실패: HTTP " + res.status);
         var t = await res.json();
         await 상태.contents.save(TEMPLATE_FILE, { type: "notebook", format: "json", content: t });
@@ -435,7 +443,7 @@
     } catch (e) { console.warn("[CUTE] 서버 확인 실패:", e); }
 
     try {
-      var t = await fetch(API + "/api/template");                 // CUTE에 등록된 템플릿
+      var t = await 서버요청("/api/template");                 // CUTE에 등록된 템플릿
       if (!t.ok) t = await fetch(new URL("../cute-assets/CUTE_template.ipynb", location.href)); // 예비
       await 파일쓰기(await t.json());
       console.log("[CUTE] 템플릿으로 mywork.ipynb 를 만들었습니다.");
@@ -458,16 +466,31 @@
   async function 미리보기준비() {
     try {
       await 모두닫기();
-      var res = await fetch(new URL("../cute-assets/CUTE_template.ipynb", location.href));
-      if (!res.ok) throw new Error("기본 템플릿을 불러오지 못했습니다.");
+      var res = API
+        ? await 서버요청("/api/template", { cache: "no-store" })
+        : await fetch(new URL("../cute-assets/CUTE_template.ipynb", location.href));
+      if (!res.ok) throw new Error("저장된 기본 템플릿을 불러오지 못했습니다: HTTP " + res.status);
       await 상태.contents.save(FILE, { type: "notebook", format: "json", content: await res.json() });
       상태.최근 = FILE;
-      await 다시열기(FILE);
+      await 새로열기(FILE);
+      /* 수업 설계는 노트북의 원래 UI를 보여 주지만, 편집과 실행은 하지 않습니다. */
+      var 노트북 = 상태.app.shell.currentWidget;
+      if (노트북 && 노트북.content && 노트북.content.model)
+        노트북.content.model.readOnly = true;
+      if (노트북 && 노트북.context && 노트북.context.model)
+        노트북.context.model.readOnly = true;
+      document.body.classList.add("cute-design-preview");
+      try { parent.postMessage({ cute: "preview-status", ok: true }, "*"); } catch (e) {}
       console.log("[CUTE] 교사 수업 설계 미리보기 준비 완료");
-    } catch (e) { console.warn("[CUTE] 미리보기 준비 실패:", e); }
+    } catch (e) {
+      try { parent.postMessage({ cute: "preview-status", ok: false, error: String(e) }, "*"); } catch (e2) {}
+      console.warn("[CUTE] 미리보기 준비 실패:", e);
+    }
   }
 
   /* ---------- 2. 노트북과 CSV를 사용자가 요청할 때만 클라우드에 저장 ---------- */
+  var CSV_MAX_FILES = 5;
+  var CSV_MAX_BYTES = 5 * 1024 * 1024;
   async function 클라우드저장() {
     if (!CONNECTED) throw new Error("학생 접속 코드 또는 서버 주소가 없습니다.");
     await 문서먼저저장();
@@ -482,15 +505,22 @@
     var csv들 = ((dir && dir.content) || []).filter(function (item) {
       return item && item.type === "file" && /\.csv$/i.test(item.path || item.name || "");
     });
+    if (csv들.length > CSV_MAX_FILES)
+      throw new Error("CSV 파일은 학생 1인당 최대 5개까지 저장할 수 있습니다.");
+    var csv총바이트 = 0;
     for (var i = 0; i < csv들.length; i++) {
       var csv = await 상태.contents.get(csv들[i].path, { content: true });
+      var 내용 = typeof csv.content === "string" ? csv.content : JSON.stringify(csv.content);
+      csv총바이트 += csv.format === "base64" ? atob(내용).length : new TextEncoder().encode(내용).byteLength;
+      if (csv총바이트 > CSV_MAX_BYTES)
+        throw new Error("CSV 파일의 총 크기는 학생 1인당 5MB(5,242,880바이트)까지입니다.");
       파일들.push({ name: csv들[i].name || csv들[i].path, kind: "data",
         encoding: csv.format === "base64" ? "base64" : "utf8", contentType: csv.mimetype || "text/csv",
-        content: typeof csv.content === "string" ? csv.content : JSON.stringify(csv.content) });
+        content: 내용 });
     }
-    return fetch(API + "/api/workspace", {
+    return 서버요청("/api/workspace", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code: CODE, classId: "2-3", lessonId: "data-science-project", files: 파일들 })
+      body: JSON.stringify({ code: CODE, classId: "2-3", lessonId: "data-science-project", syncCsv: true, files: 파일들 })
     }).then(function (response) { return response.json(); });
   }
 
@@ -574,3 +604,4 @@
   // 2분이 지나도 앱을 못 찾으면 포기하고 로그만 남깁니다.
   setTimeout(function () { clearInterval(기다림); }, 120000);
 })();
+
